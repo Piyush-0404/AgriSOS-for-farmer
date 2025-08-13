@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AgriSOS - Emergency Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        
+        .loader {
+            border: 4px solid #374151;
+            border-top: 4px solid #ef4444;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .alert-card {
+            background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            transition: all 0.3s ease;
+        }
+        
+        .alert-card:hover {
+            transform: translateY(-4px);
+            border-color: rgba(239, 68, 68, 0.6);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+        }
+        
+        .alert-card-new {
+            background: linear-gradient(135deg, #4e1f1f 0%, #271111 100%);
+            border: 1px solid rgba(239, 68, 68, 0.5);
+        }
+        
+        .alert-card-new:hover {
+            border-color: rgba(239, 68, 68, 0.8);
+        }
+        
+        .alert-card-resolved {
+            background: linear-gradient(135deg, #1f4e37 0%, #112827 100%);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+        }
+        
+        .alert-card-resolved:hover {
+            border-color: rgba(34, 197, 94, 0.6);
+        }
+        
+        .status-indicator {
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .status-indicator::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+            animation: shine 2s infinite;
+        }
+        
+        @keyframes shine {
+            0% { left: -100%; }
+            100% { left: 100%; }
+        }
+        
+        .threat-badge {
+            background: linear-gradient(45deg, #dc2626, #991b1b);
+            box-shadow: 0 0 20px rgba(220, 38, 38, 0.3);
+        }
+        
+        .threat-badge-new {
+            background: linear-gradient(45deg, #ef4444, #b91c1c);
+            box-shadow: 0 0 20px rgba(239, 68, 68, 0.5);
+        }
+        
+        .threat-badge-resolved {
+            background: linear-gradient(45deg, #22c55e, #15803d);
+            box-shadow: 0 0 20px rgba(34, 197, 94, 0.3);
+        }
+        
+        .connection-status {
+            background: linear-gradient(45deg, #059669, #047857);
+            box-shadow: 0 0 15px rgba(5, 150, 105, 0.4);
+        }
+    </style>
+</head>
+<body class="bg-gray-900">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // Supabase Configuration
+        const SUPABASE_URL = '';
+        const SUPABASE_ANON_KEY = '';
+        const GEMINI_API_KEY = '';
+        
+        // Twilio Configuration (Replace with your actual credentials)
+        const TWILIO_SID = '';
+        const TWILIO_AUTH_TOKEN = '';
+        const TWILIO_PHONE = ''; 
+        const TARGET_PHONE = ''; 
+        
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        // Icon Components
+        const Icon = ({ children, className }) => <span className={className}>{children}</span>;
+        const Siren = ({ className }) => <Icon className={className}>🚨</Icon>;
+        const MapPin = ({ className }) => <Icon className={className}>📍</Icon>;
+        const Clock = ({ className }) => <Icon className={className}>⏰</Icon>;
+        const User = ({ className }) => <Icon className={className}>👤</Icon>;
+        const ShieldAlert = ({ className }) => <Icon className={className}>🛡️</Icon>;
+        const WifiOff = ({ className }) => <Icon className={className}>📡</Icon>;
+        const Phone = ({ className }) => <Icon className={className}>📞</Icon>;
+        const Home = ({ className }) => <Icon className={className}>🏠</Icon>;
+        const X = ({ className }) => <Icon className={className}>❌</Icon>;
+        const Sparkles = ({ className }) => <Icon className={className}>✨</Icon>;
+        const Satellite = ({ className }) => <Icon className={className}>🛰️</Icon>;
+        const Activity = ({ className }) => <Icon className={className}>📊</Icon>;
+        const CheckCircle = ({ className }) => <Icon className={className}>🟢</Icon>;
+        const Trash = ({ className }) => <Icon className={className}>🗑️</Icon>;
+
+        // AI Chatbot Modal Component
+        const ChatbotModal = ({ alert, onClose }) => {
+            const [advice, setAdvice] = React.useState('');
+            const [isGenerating, setIsGenerating] = React.useState(false);
+            const [generationError, setGenerationError] = React.useState(null);
+
+            React.useEffect(() => {
+                if (alert) {
+                    generateAIAdvice();
+                }
+            }, [alert]);
+
+            const generateAIAdvice = async () => {
+                setIsGenerating(true);
+                setGenerationError(null);
+                setAdvice('');
+
+                const prompt = `You are an expert emergency responder providing urgent first aid advice for a rural emergency in India. The emergency type is: "${alert.threat_call}". The location is: ${alert.place_name}. Provide clear, numbered, step-by-step instructions for immediate response. Use bold text for critical warnings. Keep instructions practical for rural settings with limited resources.`;
+
+                try {
+                    if (!GEMINI_API_KEY || GEMINI_API_KEY === 'YOUR_GEMINI_API_KEY') {
+                        await new Promise(resolve => setTimeout(resolve, 1500));
+                        const mockAdvice = getMockAdvice(alert.threat_call);
+                        setAdvice(mockAdvice.replace(/\n/g, '<br />').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>'));
+                    } else {
+                        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                contents: [{ parts: [{ text: prompt }] }]
+                            })
+                        });
+
+                        if (!response.ok) throw new Error('API call failed');
+
+                        const result = await response.json();
+                        const text = result.candidates[0]?.content?.parts?.[0]?.text;
+                        
+                        if (text) {
+                            setAdvice(text.replace(/\n/g, '<br />').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>'));
+                        } else {
+                            throw new Error('No response generated');
+                        }
+                    }
+                } catch (error) {
+                    console.error('AI advice generation failed:', error);
+                    setGenerationError('Failed to generate AI advice. Please try again.');
+                } finally {
+                    setIsGenerating(false);
+                }
+            };
+
+            const getMockAdvice = (threatType) => {
+                const adviceMap = {
+                    'snake': "1. **STAY CALM** - Keep the person still and calm\n2. **Remove jewelry** near the bite area immediately\n3. **DO NOT** cut the wound or try to suck venom\n4. **Keep bite below heart level** if possible\n5. **Call emergency services** immediately\n6. **Note snake appearance** for medical team",
+                    'fire': "1. **EVACUATE IMMEDIATELY** - Leave the area now\n2. **Stay low** to avoid smoke inhalation\n3. **Feel doors** before opening - if hot, find another exit\n4. **Call fire department** from safe location\n5. **DO NOT** return for belongings\n6. **Meet at designated safe point**",
+                    'help': "1. **Assess the situation** safely\n2. **Call emergency services** immediately\n3. **Provide basic first aid** if trained\n4. **Keep person calm** and comfortable\n5. **DO NOT** move injured person unless necessary\n6. **Stay with person** until help arrives",
+                    'theft': "1. **Ensure safety** - Do not confront the thief\n2. **Call police** immediately with details\n3. **Note suspect description** if safe to do so\n4. **Secure the area** to prevent further loss\n5. **Report to local authorities** with evidence\n6. **Avoid touching** crime scene objects",
+                    'animal': "1. **Stay calm** - Do not run or make sudden movements\n2. **Back away slowly** from the animal\n3. **Do NOT turn your back** on the animal\n4. **Make yourself appear larger** if possible\n5. **Contact local wildlife authorities** immediately\n6. **Seek medical attention** if injured"
+                };
+                
+                return adviceMap[threatType.toLowerCase()] || adviceMap['help'];
+            };
+
+            if (!alert) return null;
+
+            return (
+                <div className="fixed top-20 right-4 w-80 h-[calc(100vh-240px)] bg-gray-800 rounded-2xl shadow-2xl border border-red-500/50 overflow-y-auto z-10">
+                    <div className="p-6 border-b border-gray-700">
+                        <div className="flex justify-between items-center">
+                            <div className="flex items-center">
+                                <Sparkles className="w-7 h-7 text-red-400 mr-3" />
+                                <div>
+                                    <h2 className="text-xl font-bold text-red-400">AI Emergency Response</h2>
+                                    <p className="text-sm text-gray-400">Threat: {alert.threat_call} | Location: {alert.place_name}</p>
+                                </div>
+                            </div>
+                            <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
+                                <X className="w-6 h-6" />
+                            </button>
+                        </div>
+                    </div>
+                    <div className="p-6 min-h-[200px]">
+                        {isGenerating && (
+                            <div className="flex items-center justify-center h-full">
+                                <div className="loader mr-4"></div>
+                                <span className="text-gray-300">Generating emergency advice...</span>
+                            </div>
+                        )}
+                        {generationError && (
+                            <div className="text-center">
+                                <p className="text-red-400">{generationError}</p>
+                                <button 
+                                    onClick={generateAIAdvice}
+                                    className="mt-4 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg transition-colors"
+                                >
+                                    Retry
+                                </button>
+                            </div>
+                        )}
+                        {advice && (
+                            <div className="text-gray-300">
+                                <div className="bg-yellow-600/20 border border-yellow-600/50 rounded-lg p-4 mb-4">
+                                    <p className="text-yellow-300 text-sm font-medium">⚠️ This is AI-generated guidance. Always contact professional emergency services immediately.</p>
+                                </div>
+                                <div 
+                                    dangerouslySetInnerHTML={{ __html: advice }} 
+                                    className="space-y-2 leading-relaxed"
+                                />
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        // Main Dashboard Component
+        function App() {
+            const [alerts, setAlerts] = React.useState([]);
+            const [isLoading, setIsLoading] = React.useState(true);
+            const [connectionStatus, setConnectionStatus] = React.useState('connecting');
+            const [selectedAlert, setSelectedAlert] = React.useState(null);
+            const [isChatbotOpen, setIsChatbotOpen] = React.useState(false);
+            const [stats, setStats] = React.useState({ total: 0, today: 0, active: 0 });
+
+            // Initialize app
+            React.useEffect(() => {
+                loadAlerts();
+                const subscription = setupRealtimeSubscription();
+                checkConnection();
+                return () => subscription(); // Cleanup subscription on unmount
+            }, []);
+
+            const checkConnection = async () => {
+                try {
+                    const { data, error } = await supabase.from('emergency_alerts').select('count', { count: 'exact', head: true });
+                    setConnectionStatus(error ? 'disconnected' : 'connected');
+                } catch (error) {
+                    setConnectionStatus('disconnected');
+                }
+            };
+
+            const loadAlerts = async () => {
+                setIsLoading(true);
+                try {
+                    const { data, error } = await supabase
+                        .from('emergency_alerts')
+                        .select('*')
+                        .order('created_at', { ascending: false })
+                        .limit(50);
+
+                    if (error) {
+                        console.error('Error loading alerts:', error);
+                        setAlerts(getDemoAlerts());
+                        setConnectionStatus('disconnected');
+                    } else {
+                        setAlerts(data || []);
+                        setConnectionStatus('connected');
+                        updateStats(data || []);
+                    }
+                } catch (error) {
+                    console.error('Error:', error);
+                    setAlerts(getDemoAlerts());
+                    setConnectionStatus('disconnected');
+                } finally {
+                    setIsLoading(false);
+                }
+            };
+
+            const sendTwilioMessage = async (alert) => {
+    console.log('Attempting to send SMS for alert:', alert);
+    const messageBody = `New emergency alert: ${alert.threat_call} at ${alert.place_name} by ${alert.person_name}. Phone: ${alert.phone_number}. GPS: ${alert.gps_location?.lat || 'N/A'}, ${alert.gps_location?.lng || 'N/A'}.`;
+    console.log('Message body:', messageBody);
+    try {
+        const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Messages.json`, {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Basic ' + btoa(TWILIO_SID + ':' + TWILIO_AUTH_TOKEN),
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: new URLSearchParams({
+                From: TWILIO_PHONE,
+                To: TARGET_PHONE,
+                Body: messageBody
+            })
+        });
+        const responseBody = await response.text();
+        console.log('Twilio response:', response.status, responseBody);
+        if (!response.ok) {
+            console.error('Twilio SMS failed:', response.status, responseBody);
+        } else {
+            console.log('SMS sent successfully');
+        }
+    } catch (error) {
+        console.error('Error sending Twilio SMS:', error.message);
+    }
+};
+
+            const setupRealtimeSubscription = () => {
+                const channel = supabase
+                    .channel('emergency_alerts')
+                    .on('postgres_changes', 
+                        { event: 'INSERT', schema: 'public', table: 'emergency_alerts' },
+                        (payload) => {
+                            setAlerts(prev => [payload.new, ...prev]);
+                            updateStats([payload.new, ...alerts]);
+                            sendTwilioMessage(payload.new);
+                        }
+                    )
+                    .on('postgres_changes',
+                        { event: 'UPDATE', schema: 'public', table: 'emergency_alerts' },
+                        (payload) => {
+                            setAlerts(prev => prev.map(alert => 
+                                alert.id === payload.new.id ? payload.new : alert
+                            ));
+                            updateStats(alerts.map(alert => 
+                                alert.id === payload.new.id ? payload.new : alert
+                            ));
+                        }
+                    )
+                    .on('postgres_changes',
+                        { event: 'DELETE', schema: 'public', table: 'emergency_alerts' },
+                        (payload) => {
+                            setAlerts(prev => prev.filter(alert => alert.id !== payload.old.id));
+                            updateStats(alerts.filter(alert => alert.id !== payload.old.id));
+                        }
+                    )
+                    .subscribe();
+
+                return () => supabase.removeChannel(channel);
+            };
+
+            const updateStats = (alertsData) => {
+                const today = new Date().toDateString();
+                const todayAlerts = alertsData.filter(alert => 
+                    new Date(alert.created_at).toDateString() === today
+                );
+                const activeAlerts = alertsData.filter(alert => 
+                    alert.status === 'active' || alert.status === 'new'
+                );
+
+                setStats({
+                    total: alertsData.length,
+                    today: todayAlerts.length,
+                    active: activeAlerts.length
+                });
+            };
+
+            const getDemoAlerts = () => {
+                return [
+                    {
+                        id: 1,
+                        person_name: 'Ramesh Kumar',
+                        place_name: 'Rampur Village',
+                        phone_number: '+919876543210',
+                        threat_call: 'snake',
+                        gps_location: { lat: 28.6139, lng: 77.2090 },
+                        created_at: new Date().toISOString(),
+                        status: 'new',
+                    },
+                    {
+                        id: 2,
+                        person_name: 'Sita Devi',
+                        place_name: 'Govindpur',
+                        phone_number: '+919123456789',
+                        threat_call: 'fire',
+                        gps_location: { lat: 28.5355, lng: 77.3910 },
+                        created_at: new Date(Date.now() - 300000).toISOString(),
+                        status: 'active',
+                    }
+                ];
+            };
+
+            const addTestAlert = async () => {
+                const testAlerts = [
+                    { person_name: 'Vijay Singh', place_name: 'Sitapur', threat_call: 'help' },
+                    { person_name: 'Anjali Sharma', place_name: 'Madhavpur', threat_call: 'fire' },
+                    { person_name: 'Mohan Lal', place_name: 'Kashipur', threat_call: 'snake' }
+                ];
+
+                const randomAlert = testAlerts[Math.floor(Math.random() * testAlerts.length)];
+                const alertData = {
+                    ...randomAlert,
+                    phone_number: `+91${Math.floor(Math.random() * 9000000000) + 1000000000}`,
+                    gps_location: {
+                        lat: 28.6139 + (Math.random() - 0.5) * 0.1,
+                        lng: 77.2090 + (Math.random() - 0.5) * 0.1
+                    },
+                    status: 'new',
+                };
+
+                try {
+                    const { error } = await supabase
+                        .from('emergency_alerts')
+                        .insert([alertData]);
+
+                    if (error) {
+                        console.error('Error adding test alert:', error);
+                        const newAlert = { ...alertData, id: Date.now(), created_at: new Date().toISOString() };
+                        setAlerts(prev => [newAlert, ...prev]);
+                        updateStats([newAlert, ...alerts]);
+                    }
+                } catch (error) {
+                    console.error('Error:', error);
+                    const newAlert = { ...alertData, id: Date.now(), created_at: new Date().toISOString() };
+                    setAlerts(prev => [newAlert, ...prev]);
+                    updateStats([newAlert, ...alerts]);
+                }
+            };
+
+            const resolveAlert = async (alertId) => {
+                try {
+                    const { error } = await supabase
+                        .from('emergency_alerts')
+                        .update({ status: 'resolved' })
+                        .eq('id', alertId);
+
+                    if (error) {
+                        console.error('Error resolving alert:', error);
+                    } else {
+                        setAlerts(prev => prev.map(alert => 
+                            alert.id === alertId ? { ...alert, status: 'resolved' } : alert
+                        ));
+                        updateStats(alerts.map(alert => 
+                            alert.id === alertId ? { ...alert, status: 'resolved' } : alert
+                        ));
+                    }
+                } catch (error) {
+                    console.error('Error:', error);
+                }
+            };
+
+            const removeAlert = async (alertId) => {
+                try {
+                    const { error } = await supabase
+                        .from('emergency_alerts')
+                        .delete()
+                        .eq('id', alertId);
+
+                    if (error) {
+                        console.error('Error removing alert:', error);
+                    } else {
+                        setAlerts(prev => prev.filter(alert => alert.id !== alertId));
+                        updateStats(alerts.filter(alert => alert.id !== alertId));
+                    }
+                } catch (error) {
+                    console.error('Error:', error);
+                    setAlerts(prev => prev.filter(alert => alert.id !== alertId));
+                    updateStats(alerts.filter(alert => alert.id !== alertId));
+                }
+            };
+
+            const openChatbot = (alert) => {
+                setSelectedAlert(alert);
+                setIsChatbotOpen(true);
+            };
+
+            const closeChatbot = () => {
+                setIsChatbotOpen(false);
+                setSelectedAlert(null);
+            };
+
+            const formatTimestamp = (timestamp) => {
+                return new Date(timestamp).toLocaleString('en-IN', {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    timeZone: 'Asia/Kolkata'
+                });
+            };
+
+            const getThreatColor = (status, threat) => {
+                if (status.toLowerCase() === 'new') return 'bg-red-600';
+                if (status.toLowerCase() === 'resolved') return 'bg-green-600';
+                const colors = {
+                    'snake': 'bg-yellow-600',
+                    'fire': 'bg-red-600',
+                    'help': 'bg-blue-600',
+                    'theft': 'bg-purple-600',
+                    'animal': 'bg-orange-600',
+                    'active': 'bg-orange-500'
+                };
+                return colors[threat?.toLowerCase()] || colors[status?.toLowerCase()] || 'bg-gray-600';
+            };
+
+            const getThreatIcon = (status, threat) => {
+                if (status.toLowerCase() === 'new') return '🚨';
+                if (status.toLowerCase() === 'resolved') return '🟢';
+                const icons = {
+                    'snake': '🐍',
+                    'fire': '🔥',
+                    'help': '🆘',
+                    'theft': '🚨',
+                    'animal': '🐅',
+                    'active': '⚠️'
+                };
+                return icons[threat?.toLowerCase()] || icons[status?.toLowerCase()] || '⚠️';
+            };
+
+            return (
+                <div className="bg-gray-900 min-h-screen text-white">
+                    <div className="container mx-auto px-4 py-6">
+                        {/* Header */}
+                        <header className="mb-8">
+                            <div className="flex flex-col lg:flex-row justify-between items-center">
+                                <div className="flex items-center mb-4 lg:mb-0">
+                                    <Siren className="w-12 h-12 text-red-500 mr-4 animate-pulse" />
+                                    <div>
+                                        <h1 className="text-4xl font-bold bg-gradient-to-r from-red-400 to-red-600 bg-clip-text text-transparent">
+                                            AgriSOS
+                                        </h1>
+                                        <p className="text-gray-400">Emergency Response Dashboard</p>
+                                    </div>
+                                </div>
+                                
+                                <div className="flex items-center space-x-4">
+                                    <button
+                                        onClick={addTestAlert}
+                                        className="bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded-lg transition-colors duration-200 flex items-center"
+                                    >
+                                        <Satellite className="w-4 h-4 mr-2" />
+                                        Simulate Alert
+                                    </button>
+                                    
+                                    <div className={`connection-status px-3 py-1 rounded-full text-sm font-medium flex items-center ${
+                                        connectionStatus === 'connected' 
+                                            ? 'text-green-100' 
+                                            : connectionStatus === 'connecting'
+                                            ? 'bg-yellow-600 text-yellow-100'
+                                            : 'bg-red-600 text-red-100'
+                                    }`}>
+                                        <span className={`w-2 h-2 rounded-full mr-2 ${
+                                            connectionStatus === 'connected' ? 'bg-green-300 animate-ping' : 'bg-red-300'
+                                        }`}></span>
+                                        {connectionStatus === 'connected' ? 'Live' : 
+                                         connectionStatus === 'connecting' ? 'Connecting' : 'Demo Mode'}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Stats Dashboard */}
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
+                                <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700">
+                                    <div className="flex items-center">
+                                        <Activity className="w-8 h-8 text-blue-400 mr-3" />
+                                        <div>
+                                            <p className="text-2xl font-bold text-blue-400">{stats.total}</p>
+                                            <p className="text-gray-400 text-sm">Total Alerts</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700">
+                                    <div className="flex items-center">
+                                        <Clock className="w-8 h-8 text-green-400 mr-3" />
+                                        <div>
+                                            <p className="text-2xl font-bold text-green-400">{stats.today}</p>
+                                            <p className="text-gray-400 text-sm">Today's Alerts</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700">
+                                    <div className="flex items-center">
+                                        <ShieldAlert className="w-8 h-8 text-red-400 mr-3" />
+                                        <div>
+                                            <p className="text-2xl font-bold text-red-400">{stats.active}</p>
+                                            <p className="text-gray-400 text-sm">Active Alerts</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </header>
+
+                        {/* Main Content */}
+                        <main>
+                            {isLoading ? (
+                                <div className="flex items-center justify-center py-20">
+                                    <div className="loader mr-4"></div>
+                                    <span className="text-gray-400">Loading emergency alerts...</span>
+                                </div>
+                            ) : alerts.length === 0 ? (
+                                <div className="text-center py-20">
+                                    <WifiOff className="w-20 h-20 mx-auto mb-6 text-gray-600" />
+                                    <h2 className="text-2xl font-semibold text-gray-400 mb-2">No Active Alerts</h2>
+                                    <p className="text-gray-500">System is monitoring for emergency signals...</p>
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                                    {alerts.map(alert => (
+                                        <div key={alert.id} className={`rounded-2xl p-6 ${alert.status === 'new' ? 'alert-card-new' : alert.status === 'resolved' ? 'alert-card-resolved' : 'alert-card'}`}>
+                                            <div className="flex justify-between items-start mb-4">
+                                                <div className="flex items-center">
+                                                    <span className="text-3xl mr-3">{getThreatIcon(alert.status, alert.threat_call)}</span>
+                                                    <div>
+                                                        <h3 className={`text-xl font-bold ${alert.status === 'new' ? 'text-red-400' : alert.status === 'resolved' ? 'text-green-400' : 'text-orange-400'} capitalize`}>
+                                                            {alert.status === 'new' ? 'New Alert' : alert.status === 'resolved' ? 'Resolved' : alert.threat_call}
+                                                        </h3>
+                                                        <p className="text-sm text-gray-400">
+                                                            {alert.status === 'new' || alert.status === 'resolved' ? `Type: ${alert.threat_call}` : 'Emergency Alert'}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                <span className={`px-3 py-1 rounded-full text-xs font-bold text-white status-indicator ${alert.status === 'new' ? 'threat-badge-new' : alert.status === 'resolved' ? 'threat-badge-resolved' : getThreatColor(alert.status, alert.threat_call)}`}>
+                                                    {alert.status?.toUpperCase() || 'NEW'}
+                                                </span>
+                                            </div>
+
+                                            <div className="space-y-3 mb-6">
+                                                <div className="flex items-center text-gray-300">
+                                                    <User className="w-5 h-5 mr-3 text-gray-500" />
+                                                    <span className="font-medium">{alert.person_name}</span>
+                                                </div>
+                                                <div className="flex items-center text-gray-300">
+                                                    <Home className="w-5 h-5 mr-3 text-gray-500" />
+                                                    <span>{alert.place_name}</span>
+                                                </div>
+                                                <div className="flex items-center text-gray-300">
+                                                    <Phone className="w-5 h-5 mr-3 text-gray-500" />
+                                                    <a href={`tel:${alert.phone_number}`} className="text-blue-400 hover:text-blue-300">
+                                                        {alert.phone_number}
+                                                    </a>
+                                                </div>
+                                                <div className="flex items-center text-gray-300">
+                                                    <Clock className="w-5 h-5 mr-3 text-gray-500" />
+                                                    <span className="text-sm">{formatTimestamp(alert.created_at)}</span>
+                                                </div>
+                                                <div className="flex items-center text-gray-300">
+                                                    <MapPin className="w-5 h-5 mr-3 text-gray-500" />
+                                                    {alert.gps_location ? (
+                                                        <a
+                                                            href={`https://www.google.com/maps?q=${alert.gps_location.lat},${alert.gps_location.lng}`}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="text-blue-400 hover:text-blue-300 text-sm"
+                                                        >
+                                                            {alert.gps_location.lat.toFixed(4)}, {alert.gps_location.lng.toFixed(4)}
+                                                        </a>
+                                                    ) : (
+                                                        <span className="text-gray-500 text-sm">GPS not available</span>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            <div className="flex space-x-2">
+                                                <button
+                                                    onClick={() => openChatbot(alert)}
+                                                    className="flex-1 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-medium py-3 px-4 rounded-lg transition-all duration-200 flex items-center justify-center group"
+                                                >
+                                                    <Sparkles className="w-5 h-5 mr-2 group-hover:animate-spin" />
+                                                    Get AI Advice
+                                                </button>
+                                                {alert.status !== 'resolved' && (
+                                                    <button
+                                                        onClick={() => resolveAlert(alert.id)}
+                                                        className="flex-1 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white font-medium py-3 px-4 rounded-lg transition-all duration-200 flex items-center justify-center group"
+                                                    >
+                                                        <CheckCircle className="w-5 h-5 mr-2" />
+                                                        Resolve
+                                                    </button>
+                                                )}
+                                                <button
+                                                    onClick={() => removeAlert(alert.id)}
+                                                    className="flex-1 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white font-medium py-3 px-4 rounded-lg transition-all duration-200 flex items-center justify-center group"
+                                                >
+                                                    <Trash className="w-5 h-5 mr-2" />
+                                                    Remove
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </main>
+                    </div>
+                    
+                    {/* IoT Device Simulator */}
+                    <div className="fixed bottom-6 right-6">
+                        <div className="bg-gray-800 rounded-2xl p-4 border border-gray-700 shadow-2xl">
+                            <div className="flex items-center mb-2">
+                                <Satellite className="w-5 h-5 text-green-400 mr-2" />
+                                <span className="text-sm font-medium text-gray-300">IoT Device Status</span>
+                            </div>
+                            <div className="flex items-center">
+                                <div className="w-2 h-2 bg-green-400 rounded-full animate-ping mr-2"></div>
+                                <span className="text-xs text-gray-400">NEO6M GPS Connected</span>
+                            </div>
+                            <div className="flex items-center mt-1">
+                                <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse mr-2"></div>
+                                <span className="text-xs text-gray-400">ML Model Active</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    {isChatbotOpen && <ChatbotModal alert={selectedAlert} onClose={closeChatbot} />}
+                </div>
+            );
+        }
+
+        // Initialize React App
+        const container = document.getElementById('root');
+        const root = ReactDOM.createRoot(container);
+        root.render(<App />);
+    </script>
+
+    <!-- SQL Setup Instructions -->
+    
+</body>
+</html>
