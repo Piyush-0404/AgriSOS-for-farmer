@@ -1,0 +1,42 @@
+-- Create emergency alerts table
+CREATE TABLE emergency_alerts (
+  id BIGSERIAL PRIMARY KEY,
+  person_name TEXT NOT NULL,
+  place_name TEXT NOT NULL,
+  phone_number TEXT NOT NULL,
+  threat_call TEXT NOT NULL CHECK (threat_call IN ('snake', 'fire', 'help', 'theft', 'animal')),
+  gps_location JSONB,
+  status TEXT DEFAULT 'new' CHECK (status IN ('new', 'active', 'resolved', 'false_alarm')),
+  device_id TEXT,
+  ml_confidence DECIMAL(3,2),
+  detection_method TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+
+-- Enable Row Level Security
+ALTER TABLE emergency_alerts ENABLE ROW LEVEL SECURITY;
+
+-- Create policies (adjust based on your security requirements)
+CREATE POLICY "Allow all operations on emergency_alerts" ON emergency_alerts
+  FOR ALL USING (true) WITH CHECK (true);
+
+-- Create indexes for better performance
+CREATE INDEX idx_emergency_alerts_created_at ON emergency_alerts(created_at DESC);
+CREATE INDEX idx_emergency_alerts_status ON emergency_alerts(status);
+CREATE INDEX idx_emergency_alerts_threat_call ON emergency_alerts(threat_call);
+
+
+-- Create updated_at trigger
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE 'plpgsql';
+
+CREATE TRIGGER update_emergency_alerts_updated_at 
+  BEFORE UPDATE ON emergency_alerts 
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
